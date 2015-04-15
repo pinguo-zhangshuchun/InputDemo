@@ -316,7 +316,7 @@ PRIVATE int talk_with_master(evp_cntxt *cntxt)
 	uint32 type;
 	uint32 len;
 
-	if (4 != recv_data(cntxt->fd_session, &buff, 16)) {
+	if (16 != recv_data(cntxt->fd_session, &buff, 16)) {
 		printf("master device disconnect.\n");
 		struct epoll_event ev;
 		ev.data.fd = cntxt->fd_session;
