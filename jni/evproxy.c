@@ -166,7 +166,9 @@ PUBLIC int start_evproxy(evp_cntxt *cntxt)
 		return -1;
 	}
 
-	ev.data.fd = cntxt->fd_dev[0];
+	ev.events = EPOLLIN;
+	//ev.data.fd = cntxt->fd_dev[0];
+	ev.data.u32 = cntxt->fd_dev[0];
 	if (epoll_ctl(
 				cntxt->fd_epoll, 
 				EPOLL_CTL_ADD, 
@@ -175,6 +177,8 @@ PUBLIC int start_evproxy(evp_cntxt *cntxt)
 		LogE("Failed epoll add fd_dev[0]");
 		return -1;
 	}
+
+	return 0;
 }
 
 PUBLIC int stop_evproxy(evp_cntxt *cntxt)
@@ -202,11 +206,20 @@ PUBLIC int loop_evproxy(evp_cntxt *cntxt)
 			}
 			// /dev/input	
 			else if (events[i].data.fd == cntxt->fd_dev[0]) {
+
+				if (cntxt->fd_session < 0) {
+					printf("fd_sesion < 0\n");
+					continue;
+				}
+
 				// read event & push
 				int x, y;
 				if ((read_event, cntxt, &x, &y) < 0) {
 					LogE("Failed read event.");
+					continue;
 				}
+
+				printf("x=%d, y=%d\n", x, y);
 
 				uint32 buffer[4];
 				buffer[0] = htonl(CMD_PSH);
@@ -216,6 +229,17 @@ PUBLIC int loop_evproxy(evp_cntxt *cntxt)
 
 				if (send_data(cntxt->fd_session, buffer, 16) < 0) {
 					printf("Failed push event\n");
+					struct epoll_event ev;
+					ev.data.fd = cntxt->fd_session;
+					if (epoll_ctl(
+								cntxt->fd_epoll, 
+								EPOLL_CTL_DEL, 
+								cntxt->fd_session, 
+								&ev) < 0) {
+						printf("Failed epoll delete fd_session\n");
+					}
+
+					close (cntxt->fd_session);
 				}
 			}
 			// master device message
@@ -226,13 +250,19 @@ PUBLIC int loop_evproxy(evp_cntxt *cntxt)
 		}
 	}
 }
-	
+
 PRIVATE int scan_input_device(evp_cntxt *cntxt)
 {
 #define PATH "/dev/input/event3"
 	int fd = open(PATH, O_RDWR);
 	if (fd < 0) {
 		printf("Failed scan input device, We only support HongMi now.\n");
+		return -1;
+	}
+
+	if (fcntl(fd, F_SETFL, O_NONBLOCK)) {
+		printf("Failed make device fd non-blocking.\n");
+		close (fd);
 		return -1;
 	}
 
@@ -254,7 +284,7 @@ PRIVATE int read_event(evp_cntxt *cntxt, int *x, int *y)
 	VALIDATE_NOT_NULL(cntxt);
 	VALIDATE_NOT_NULL(x);
 	VALIDATE_NOT_NULL(y);
-	
+
 	struct input_event ev;
 	if (sizeof(ev) != read(cntxt->fd_dev[0], &ev, sizeof(ev))) {
 		LogE("Failed read input event");
@@ -263,6 +293,8 @@ PRIVATE int read_event(evp_cntxt *cntxt, int *x, int *y)
 
 	*x = ev.code;
 	*y = ev.value;
+
+	return 0;
 }
 
 PRIVATE int write_event(evp_cntxt *cntxt, int x, int y)
@@ -364,6 +396,6 @@ PRIVATE int talk_with_master(evp_cntxt *cntxt)
 			write_event(cntxt, x, y);
 			break;
 	}
-	
+
 	return 0;
 }
