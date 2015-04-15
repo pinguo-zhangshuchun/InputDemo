@@ -6,6 +6,7 @@ static void usage(int argc, char **argv);
 
 int main(int argc, char **argv)
 {
+	usage(argc, argv);
 	int port = DEFAULT_PORT;
 	if (3 == argc) {
 		port = atoi(argv[2]);

@@ -10,6 +10,19 @@
 
 #include "comm.h"
 
+enum {
+	CMD_MIN = 0xa0,
+	CMD_GET = 0xa1,
+	CMD_SET = 0xa2,
+	CMD_PSH = 0xa3,
+	CMD_MAX = 0xa4,
+};
+
+typedef struct {
+	uint32 type;
+	uint32 len;
+} cmd_t;
+
 struct evp_cntxt;
 typedef struct evp_cntxt evp_cntxt;
 
@@ -32,5 +45,6 @@ PRIVATE int scan_input_device(evp_cntxt *cntxt);
 PRIVATE int read_event(evp_cntxt *cntxt, int *x, int *y);
 PRIVATE int write_event(evp_cntxt *cntxt, int x, int y);
 PRIVATE int accept_master_connect(evp_cntxt *cntxt);
+PRIVATE int talk_with_master(evp_cntxt *cntxt);
 
 #endif

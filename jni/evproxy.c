@@ -4,6 +4,7 @@
 #include <linux/input.h>
 #include <netinet/in.h>
 #include <protocol.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/epoll.h>
 #include <sys/socket.h>
@@ -23,9 +24,9 @@ struct evp_cntxt{
 	int	token;
 	int fd_dev_max;
 	int *fd_dev;
-	cb_ask *cb_ask;
-	cb_cmd *cb_cmd;
-	cb_report *cb_report;
+	cb_ask cb_ask;
+	cb_cmd cb_cmd;
+	cb_report cb_report;
 };
 
 evp_cntxt* create_evproxy(const char *ip, int port) 
@@ -201,11 +202,26 @@ PUBLIC int loop_evproxy(evp_cntxt *cntxt)
 			}
 			// /dev/input	
 			else if (events[i].data.fd == cntxt->fd_dev[0]) {
-				// read event & send
+				// read event & push
+				int x, y;
+				if ((read_event, cntxt, &x, &y) < 0) {
+					LogE("Failed read event.");
+				}
+
+				uint32 buffer[4];
+				buffer[0] = htonl(CMD_PSH);
+				buffer[1] = 8;
+				buffer[2] = htonl(x);
+				buffer[3] = htonl(y);
+
+				if (send_data(cntxt->fd_session, buffer, 16) < 0) {
+					printf("Failed push event\n");
+				}
 			}
 			// master device message
 			else if (events[i].data.fd == cntxt->fd_session) {
 				// master device message
+				talk_with_master(cntxt);
 			}
 		}
 	}
@@ -229,6 +245,8 @@ PRIVATE int scan_input_device(evp_cntxt *cntxt)
 	}
 
 	cntxt->fd_dev[0] = fd;
+
+	return 0;
 }
 
 PRIVATE int read_event(evp_cntxt *cntxt, int *x, int *y)
@@ -238,7 +256,7 @@ PRIVATE int read_event(evp_cntxt *cntxt, int *x, int *y)
 	VALIDATE_NOT_NULL(y);
 	
 	struct input_event ev;
-	if (sizoef(ev) != read(cntxt->fd_dev[0], &ev, sizeof(ev))) {
+	if (sizeof(ev) != read(cntxt->fd_dev[0], &ev, sizeof(ev))) {
 		LogE("Failed read input event");
 		return -1;
 	}
@@ -262,6 +280,11 @@ PRIVATE int accept_master_connect(evp_cntxt *cntxt)
 		return -1;
 	}
 
+	struct sockaddr_in sin;
+	memcpy(&sin, &addr, sizeof(addr));
+	printf("accept master connect %s:%d\n",
+			inet_ntoa(sin.sin_addr), ntohs(sin.sin_port));
+
 	if (cntxt->fd_session > 0) {
 		printf("Only one master device supported now.\n");
 		close (fd);
@@ -282,5 +305,65 @@ PRIVATE int accept_master_connect(evp_cntxt *cntxt)
 
 	cntxt->fd_session = fd;
 
+	return 0;
+}
+
+PRIVATE int talk_with_master(evp_cntxt *cntxt)
+{
+	VALIDATE_NOT_NULL(cntxt);
+
+	uint32 buff[4];
+	uint32 type;
+	uint32 len;
+
+	if (4 != recv_data(cntxt->fd_session, &buff, 16)) {
+		printf("master device disconnect.\n");
+		struct epoll_event ev;
+		ev.data.fd = cntxt->fd_session;
+		if (epoll_ctl(
+					cntxt->fd_epoll, 
+					EPOLL_CTL_DEL, 
+					cntxt->fd_session, 
+					&ev) < 0) {
+			LogE("Failed epoll delete fd_sessionr");
+			return -1;
+		}
+
+		close (cntxt->fd_session);
+		cntxt->fd_session = -1;	
+		return -1;
+	}
+
+	type = buff[0];
+	type = ntohl(type);
+	if (type <= CMD_MIN || type >= CMD_MAX) {
+		LogE("Invalid cmd type");
+		return -1;
+	}
+
+	len = buff[1];
+	len = ntohl(len);
+	printf("cmd type=%d,len=%d\n", type, len);
+
+
+	int x, y;
+
+	switch (type) {
+		case CMD_GET:
+			buff[2] = htonl(480);
+			buff[3] = htonl(800);
+			if (send_data(cntxt->fd_session, buff, 16) < 0) {
+				printf("Failed send widht, height\n");
+			}
+			break;
+
+		case CMD_SET:
+			x = ntohl(buff[2]);
+			y = ntohl(buff[3]);
+			printf("x=%d, y=%d\n", x, y);
+			write_event(cntxt, x, y);
+			break;
+	}
+	
 	return 0;
 }
