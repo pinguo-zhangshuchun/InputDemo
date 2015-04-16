@@ -42,7 +42,6 @@ PUBLIC void set_report_cb(evp_cntxt *cntxt, cb_report report);
 PRIVATE int get_token(int fd, int *token);
 PRIVATE int prepare_server(int fd);
 PRIVATE int scan_input_device(evp_cntxt *cntxt);
-PRIVATE int read_event(evp_cntxt *cntxt, int *x, int *y);
 PRIVATE int write_event(evp_cntxt *cntxt, int x, int y);
 PRIVATE int accept_master_connect(evp_cntxt *cntxt);
 PRIVATE int talk_with_master(evp_cntxt *cntxt);

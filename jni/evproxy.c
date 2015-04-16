@@ -4,11 +4,13 @@
 #include <linux/input.h>
 #include <netinet/in.h>
 #include <protocol.h>
+#include <pthread.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/epoll.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
+#include <sys/time.h>
 #include <sys/types.h>
 #include <unistd.h>
 
@@ -141,6 +143,54 @@ PUBLIC void free_evproxy(evp_cntxt *cntxt)
 	}
 }
 
+void* read_event_func(void *param) {
+	evp_cntxt *cntxt = (evp_cntxt *)param;
+	int x, y;
+	int buff[2];
+
+	while (!cntxt->exit_flag) {
+
+#define MAX_EVENTS 64 
+
+/** I am so sad that ndk header file not define these **/		
+#define ABS_MT_POSITION_X 0x35
+#define ABS_MT_POSITION_Y 0x36
+/**  end   **/
+
+		struct input_event ev[MAX_EVENTS];
+		int ret = read(cntxt->fd_dev[0], ev, MAX_EVENTS * sizeof(ev[0]));
+		ret = ret / sizeof(ev[0]);
+		int i;
+		for (i = 0; i < ret-1; ++i) {
+
+			printf("type:%d,code:%x,value:%d\n", ev[i].type, ev[i].code,
+					ev[i].value);
+
+			if (EV_ABS != ev[i].type) {
+				continue;
+			}
+
+			if (ABS_MT_POSITION_X == ev[i].code &&
+					ABS_MT_POSITION_Y == ev[i+1].code	) {
+				x = ev[i].value;
+				y = ev[i+1].value;
+
+				buff[0] = x;
+				buff[1] = y;
+//				printf("(%d,%d)\n", x, y);
+
+				if (cntxt->fd_session > 0) {
+					if (send_data(cntxt->fd_session, buff, 8) < 0) {
+						LogE("Failed report to master");
+					}
+				}
+			}
+		}
+
+		printf("\n\n");
+	}
+}
+
 PUBLIC int start_evproxy(evp_cntxt *cntxt)
 {
 	if (scan_input_device(cntxt) < 0) {
@@ -166,6 +216,7 @@ PUBLIC int start_evproxy(evp_cntxt *cntxt)
 		return -1;
 	}
 
+#if 0
 	ev.events = EPOLLIN;
 	//ev.data.fd = cntxt->fd_dev[0];
 	ev.data.u32 = cntxt->fd_dev[0];
@@ -175,6 +226,13 @@ PUBLIC int start_evproxy(evp_cntxt *cntxt)
 				cntxt->fd_dev[0], 
 				&ev) < 0) {
 		LogE("Failed epoll add fd_dev[0]");
+		return -1;
+	}
+#endif
+
+	pthread_t pid;
+	if(pthread_create(&pid, NULL, read_event_func, cntxt)) {
+		LogE("Failed create read event thread");
 		return -1;
 	}
 
@@ -188,12 +246,12 @@ PUBLIC int stop_evproxy(evp_cntxt *cntxt)
 
 PUBLIC int loop_evproxy(evp_cntxt *cntxt)
 {
-#define MAX_EVENTS 16
-	struct epoll_event events[MAX_EVENTS];
+#define MAX_EPOLL_EVENTS 16
+	struct epoll_event events[MAX_EPOLL_EVENTS];
 	int i, nfds;
 
 	while (!cntxt->exit_flag) {
-		nfds = epoll_wait(cntxt->fd_epoll, events, MAX_EVENTS, -1);
+		nfds = epoll_wait(cntxt->fd_epoll, events, MAX_EPOLL_EVENTS, -1);
 		if (nfds < 0) {
 			LogE("Failed epoll_wait");
 			break;
@@ -204,13 +262,10 @@ PUBLIC int loop_evproxy(evp_cntxt *cntxt)
 			if (events[i].data.fd == cntxt->fd_server) {
 				accept_master_connect(cntxt);
 			}
+
+#if 0
 			// /dev/input	
 			else if (events[i].data.fd == cntxt->fd_dev[0]) {
-
-				if (cntxt->fd_session < 0) {
-					printf("fd_sesion < 0\n");
-					continue;
-				}
 
 				// read event & push
 				int x, y;
@@ -220,6 +275,11 @@ PUBLIC int loop_evproxy(evp_cntxt *cntxt)
 				}
 
 				printf("x=%d, y=%d\n", x, y);
+
+				if (cntxt->fd_session <= 0) {
+//					printf("fd_sesion <= 0\n");
+					continue;
+				}
 
 				uint32 buffer[4];
 				buffer[0] = htonl(CMD_PSH);
@@ -240,8 +300,12 @@ PUBLIC int loop_evproxy(evp_cntxt *cntxt)
 					}
 
 					close (cntxt->fd_session);
+					cntxt->fd_session = -1;
 				}
 			}
+
+#endif
+
 			// master device message
 			else if (events[i].data.fd == cntxt->fd_session) {
 				// master device message
@@ -260,12 +324,6 @@ PRIVATE int scan_input_device(evp_cntxt *cntxt)
 		return -1;
 	}
 
-	if (fcntl(fd, F_SETFL, O_NONBLOCK)) {
-		printf("Failed make device fd non-blocking.\n");
-		close (fd);
-		return -1;
-	}
-
 	cntxt->fd_dev_max = 1;
 	cntxt->fd_dev = (int *)calloc(1, sizeof(int));
 	if (NULL == cntxt->fd_dev) {
@@ -279,27 +337,48 @@ PRIVATE int scan_input_device(evp_cntxt *cntxt)
 	return 0;
 }
 
-PRIVATE int read_event(evp_cntxt *cntxt, int *x, int *y)
-{
-	VALIDATE_NOT_NULL(cntxt);
-	VALIDATE_NOT_NULL(x);
-	VALIDATE_NOT_NULL(y);
-
-	struct input_event ev;
-	if (sizeof(ev) != read(cntxt->fd_dev[0], &ev, sizeof(ev))) {
-		LogE("Failed read input event");
-		return -1;
-	}
-
-	*x = ev.code;
-	*y = ev.value;
-
-	return 0;
-}
-
 PRIVATE int write_event(evp_cntxt *cntxt, int x, int y)
 {
+	struct timeval tv;
+	if (gettimeofday(&tv, NULL)) {
+		printf("Failed get the current time.\n");
+	}
+
 	struct input_event ev;
+
+	ev.time = tv;
+	ev.type = EV_SYN;
+	ev.code = 2;
+	ev.value = 0;
+	if (sizeof(ev) != write(cntxt->fd_dev[0], &ev, sizeof(ev))) {
+		printf("Failed write start sync\n");
+	}
+
+	// x
+	ev.type = EV_ABS;
+	ev.code = ABS_MT_POSITION_X;
+	ev.value = x;
+	if (sizeof(ev) != write(cntxt->fd_dev[0], &ev, sizeof(ev))) {
+		printf("Failed write x\n");
+	}
+	
+	// y
+	ev.code = ABS_MT_POSITION_Y;
+	ev.value = y;
+	if (sizeof(ev) != write(cntxt->fd_dev[0], &ev, sizeof(ev))) {
+		printf("Failed write y\n");
+	}
+
+	// end sync
+	ev.time = tv;
+	ev.type = EV_SYN;
+	ev.code = 2;
+	ev.value = 0;
+	if (sizeof(ev) != write(cntxt->fd_dev[0], &ev, sizeof(ev))) {
+		printf("Failed write end sync\n");
+	}
+
+	return 0;
 }
 
 PRIVATE int accept_master_connect(evp_cntxt *cntxt)

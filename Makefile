@@ -3,14 +3,13 @@ CC = gcc
 CFLAGS =  -Ijni \
 		  -g 
 	      #-DDEBUG #-m32
+LDFLAGS = -lpthread
 
 SRC = $(wildcard jni/*.c)
 OBJ = $(patsubst %.c, %.o, $(SRC))
 
 $(PROJ) : $(OBJ)
 	$(CC) $^ $(CFLAGS) $(LDFLAGS) -o $@
-
-	$(CC) $^ $(CFLAGS) -o $@
 
 .PHONEY:clean $(PROJ) 
 clean:
