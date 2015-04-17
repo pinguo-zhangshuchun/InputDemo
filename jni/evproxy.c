@@ -87,7 +87,6 @@ PRIVATE int get_token(int fd, int *token) {
 	}
 
 	int tk = ntohl(header.token);
-	printf("token:%d\n", tk);
 	if (tk <= 0) { Log("server response error msg\n");
 		return -1;
 	} 
@@ -162,10 +161,6 @@ void* read_event_func(void *param) {
 		ret = ret / sizeof(ev[0]);
 		int i;
 		for (i = 0; i < ret-1; ++i) {
-
-			printf("type:%d,code:%x,value:%d\n", ev[i].type, ev[i].code,
-					ev[i].value);
-
 			if (EV_ABS != ev[i].type) {
 				continue;
 			}
@@ -175,20 +170,19 @@ void* read_event_func(void *param) {
 				x = ev[i].value;
 				y = ev[i+1].value;
 
-				buff[0] = x;
-				buff[1] = y;
-//				printf("(%d,%d)\n", x, y);
+				buff[0] = CMD_PSH;
+				buff[1] = 16;
+				buff[2] = htonl(x);
+				buff[3] = htonl(y);
 
 				if (cntxt->fd_session > 0) {
-					if (send_data(cntxt->fd_session, buff, 8) < 0) {
+					if (send_data(cntxt->fd_session, buff, 16) < 0) {
 						LogE("Failed report to master");
 					}
-				}
-			}
-		}
-
-		printf("\n\n");
-	}
+				} 
+			} // if end
+		} // for end
+	} // while end
 }
 
 PUBLIC int start_evproxy(evp_cntxt *cntxt)
@@ -262,50 +256,6 @@ PUBLIC int loop_evproxy(evp_cntxt *cntxt)
 			if (events[i].data.fd == cntxt->fd_server) {
 				accept_master_connect(cntxt);
 			}
-
-#if 0
-			// /dev/input	
-			else if (events[i].data.fd == cntxt->fd_dev[0]) {
-
-				// read event & push
-				int x, y;
-				if ((read_event, cntxt, &x, &y) < 0) {
-					LogE("Failed read event.");
-					continue;
-				}
-
-				printf("x=%d, y=%d\n", x, y);
-
-				if (cntxt->fd_session <= 0) {
-//					printf("fd_sesion <= 0\n");
-					continue;
-				}
-
-				uint32 buffer[4];
-				buffer[0] = htonl(CMD_PSH);
-				buffer[1] = 8;
-				buffer[2] = htonl(x);
-				buffer[3] = htonl(y);
-
-				if (send_data(cntxt->fd_session, buffer, 16) < 0) {
-					printf("Failed push event\n");
-					struct epoll_event ev;
-					ev.data.fd = cntxt->fd_session;
-					if (epoll_ctl(
-								cntxt->fd_epoll, 
-								EPOLL_CTL_DEL, 
-								cntxt->fd_session, 
-								&ev) < 0) {
-						printf("Failed epoll delete fd_session\n");
-					}
-
-					close (cntxt->fd_session);
-					cntxt->fd_session = -1;
-				}
-			}
-
-#endif
-
 			// master device message
 			else if (events[i].data.fd == cntxt->fd_session) {
 				// master device message
@@ -345,34 +295,72 @@ PRIVATE int write_event(evp_cntxt *cntxt, int x, int y)
 	}
 
 	struct input_event ev;
-
 	ev.time = tv;
-	ev.type = EV_SYN;
-	ev.code = 2;
-	ev.value = 0;
+	ev.type = 1;
+	ev.code = 0x014a;
+	ev.value = 1;
+	if (sizeof(ev) != write(cntxt->fd_dev[0], &ev, sizeof(ev))) {
+		printf("Failed write start sync\n");
+	}
+
+	ev.type = 3;
+	ev.code = 0x30;
+	ev.value = 0x14;
 	if (sizeof(ev) != write(cntxt->fd_dev[0], &ev, sizeof(ev))) {
 		printf("Failed write start sync\n");
 	}
 
 	// x
-	ev.type = EV_ABS;
-	ev.code = ABS_MT_POSITION_X;
+	ev.type = 3; //EV_ABS;
+	ev.code = 0x35; //ABS_MT_POSITION_X;
 	ev.value = x;
 	if (sizeof(ev) != write(cntxt->fd_dev[0], &ev, sizeof(ev))) {
 		printf("Failed write x\n");
 	}
 	
 	// y
-	ev.code = ABS_MT_POSITION_Y;
+	ev.type = 3;
+	ev.code = 0x36; //ABS_MT_POSITION_Y;
 	ev.value = y;
 	if (sizeof(ev) != write(cntxt->fd_dev[0], &ev, sizeof(ev))) {
 		printf("Failed write y\n");
 	}
 
-	// end sync
-	ev.time = tv;
-	ev.type = EV_SYN;
+	ev.type = 3;
+	ev.code = 0x39;
+	ev.value = 0;
+	if (sizeof(ev) != write(cntxt->fd_dev[0], &ev, sizeof(ev))) {
+		printf("Failed write end sync\n");
+	}
+
+	ev.type = 0;
+	ev.code = 2; 
+	ev.value = 0;
+	if (sizeof(ev) != write(cntxt->fd_dev[0], &ev, sizeof(ev))) {
+		printf("Failed write end sync\n");
+	}
+
+	ev.type = 0;
+	ev.code = 0;
+	ev.value = 0;
+	if (sizeof(ev) != write(cntxt->fd_dev[0], &ev, sizeof(ev))) {
+		printf("Failed write end sync\n");
+	}
+
+	ev.type = 1;
+	ev.code = 0x14a;
+	ev.value = 0;
+	if (sizeof(ev) != write(cntxt->fd_dev[0], &ev, sizeof(ev))) {
+		printf("Failed write end sync\n");
+	}
+
+	ev.type = 0;
 	ev.code = 2;
+	ev.value = 0;
+
+	// sync
+	ev.type = 0;
+	ev.code = 0;
 	ev.value = 0;
 	if (sizeof(ev) != write(cntxt->fd_dev[0], &ev, sizeof(ev))) {
 		printf("Failed write end sync\n");
@@ -454,8 +442,6 @@ PRIVATE int talk_with_master(evp_cntxt *cntxt)
 
 	len = buff[1];
 	len = ntohl(len);
-	printf("cmd type=%d,len=%d\n", type, len);
-
 
 	int x, y;
 
