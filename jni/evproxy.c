@@ -18,6 +18,8 @@
 #include "comm.h"
 #include "evproxy.h"
 
+#define test_bit(bit, array) (array[bit/8] & (1 << (bit%8)))
+
 struct evp_cntxt{
 	int exit_flag;
 	int fd_epoll;
@@ -268,16 +270,12 @@ PUBLIC int loop_evproxy(evp_cntxt *cntxt)
 
 PRIVATE int scan_input_device(evp_cntxt *cntxt)
 {
+    VALIDATE_NOT_NULL(cntxt);
+
+    int flag = 0;
+    int fd = -1;
+
 #define PATH "/dev/input/"
-
-#if 0
-	int fd = open(PATH, O_RDWR);
-	if (fd < 0) {
-		printf("Failed scan input device, We only support HongMi now.\n");
-		return -1;
-	}
-#endif
-
     DIR *dir = opendir(PATH);
     if (NULL == dir) {
         LogE("Failed scan input device");
@@ -297,45 +295,50 @@ PRIVATE int scan_input_device(evp_cntxt *cntxt)
         memset(fname, 0, FNAME_LEN);
         strcpy(fname, PATH);
         strcat(fname, dt->d_name);
-        printf("%s\n", fname);
 
-        int fd = open(fname, O_RDWR);
+        fd = open(fname, O_RDWR);
         if (fd < 0) {
             printf("Failed open %s\n", fname);
             continue;
         }
 
-        int evtype = 0;
-        if (ioctl(fd, EVIOCGBIT(0, EV_MAX), &evtype)) {
+        uint8 evtype[(ABS_MAX + 1) / 8];
+        memset(evtype, 0, sizeof(evtype));
+        if (ioctl(fd, EVIOCGBIT(EV_ABS, sizeof(evtype)), evtype) < 0) {
             printf("Failed get device ability,%s\n", strerror(errno));
             close (fd);
             continue;
         }
         
-        if (evtype & EV_SYN) {
-            printf("EV_SYN \n");
-        } else if (evtype & EV_KEY) {
-            printf("EV_KEY\n");
-        } else if (evtype & EV_ABS) {
-            printf("EV_ABS\n");
-        } else if (evtype & EV_REL) {
-            printf("EV_REL\n");
+        if (test_bit(ABS_MT_POSITION_X, evtype) &&
+                test_bit(ABS_MT_POSITION_Y, evtype)) {
+
+            printf("find mulitle-touch device:%s\n", fname);
+            flag = 1;
+            break;
         }
+
+        close (fd);
     }
 
     closedir(dir);
 
-	cntxt->fd_dev_max = 1;
-	cntxt->fd_dev = (int *)calloc(1, sizeof(int));
-	if (NULL == cntxt->fd_dev) {
-		LogE("Failed calloc mem for fd_dev");
-		//close (fd);
-		return -1;
-	}
+    if (flag) {
+        cntxt->fd_dev_max = 1;
+        cntxt->fd_dev = (int *)calloc(1, sizeof(int));
+        if (NULL == cntxt->fd_dev) {
+            LogE("Failed calloc mem for fd_dev");
+            close(fd);
+            return -1;
+        }
+        cntxt->fd_dev[0] = fd;
 
-	//cntxt->fd_dev[0] = fd;
+        return 0;
+    } 
 
-	return 0;
+    printf("Not found multle-touch device\n");
+
+    return -1;
 }
 
 PRIVATE int write_event(evp_cntxt *cntxt, int x, int y)
