@@ -1,4 +1,5 @@
 #include <arpa/inet.h>
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <linux/input.h>
@@ -267,22 +268,72 @@ PUBLIC int loop_evproxy(evp_cntxt *cntxt)
 
 PRIVATE int scan_input_device(evp_cntxt *cntxt)
 {
-#define PATH "/dev/input/event3"
+#define PATH "/dev/input/"
+
+#if 0
 	int fd = open(PATH, O_RDWR);
 	if (fd < 0) {
 		printf("Failed scan input device, We only support HongMi now.\n");
 		return -1;
 	}
+#endif
+
+    DIR *dir = opendir(PATH);
+    if (NULL == dir) {
+        LogE("Failed scan input device");
+        return -1;
+    }
+
+#define FNAME_LEN 32
+    char fname[FNAME_LEN];
+    struct dirent *dt = NULL;
+    while ((dt = readdir(dir))) {
+        if (!strcmp(dt->d_name, ".") || 
+                !strcmp(dt->d_name, "..") ||
+                DT_CHR != dt->d_type) {
+            continue;
+        }
+
+        memset(fname, 0, FNAME_LEN);
+        strcpy(fname, PATH);
+        strcat(fname, dt->d_name);
+        printf("%s\n", fname);
+
+        int fd = open(fname, O_RDWR);
+        if (fd < 0) {
+            printf("Failed open %s\n", fname);
+            continue;
+        }
+
+        int evtype = 0;
+        if (ioctl(fd, EVIOCGBIT(0, EV_MAX), &evtype)) {
+            printf("Failed get device ability,%s\n", strerror(errno));
+            close (fd);
+            continue;
+        }
+        
+        if (evtype & EV_SYN) {
+            printf("EV_SYN \n");
+        } else if (evtype & EV_KEY) {
+            printf("EV_KEY\n");
+        } else if (evtype & EV_ABS) {
+            printf("EV_ABS\n");
+        } else if (evtype & EV_REL) {
+            printf("EV_REL\n");
+        }
+    }
+
+    closedir(dir);
 
 	cntxt->fd_dev_max = 1;
 	cntxt->fd_dev = (int *)calloc(1, sizeof(int));
 	if (NULL == cntxt->fd_dev) {
 		LogE("Failed calloc mem for fd_dev");
-		close (fd);
+		//close (fd);
 		return -1;
 	}
 
-	cntxt->fd_dev[0] = fd;
+	//cntxt->fd_dev[0] = fd;
 
 	return 0;
 }
