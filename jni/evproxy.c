@@ -501,8 +501,8 @@ PRIVATE int talk_with_master(evp_cntxt *cntxt)
 
 	switch (type) {
 		case CMD_GET:
-			buff[2] = htonl(480);
-			buff[3] = htonl(800);
+			buff[2] = htonl(720);
+			buff[3] = htonl(1280);
 			if (send_data(cntxt->fd_session, buff, 16) < 0) {
 				printf("Failed send widht, height\n");
 			}
